@@ -6,6 +6,12 @@
 #include<string.h>
 #include<malloc.h>
 #include<pcap.h>
+
+#define socket_num 10
+Socket *sockets[socket_num];
+int handshakes[socket_num];
+int sockets_count;
+int start=0;
 void  socket_copy(Socket *socket1,Socket *socket2)
 {
 	strcpy(socket1->src_ip,socket2->src_ip);
@@ -49,8 +55,6 @@ int analysis(packet_info **p_info,struct pcap_pkthdr *pkt,const u_char *packet)
 			tcp_h=(struct tcphdr*)(packet+offset);
 			offset+=tcp_h->doff<<2;
 			len=ntohs(ip_h->tot_len)+14-offset;
-			if(len<=0)
-				return 1;
 			Socket *socket=(Socket *)malloc(sizeof(Socket));
 			addr.s_addr=ip_h->saddr;
 			strcpy(socket->src_ip,inet_ntoa(addr));
@@ -59,19 +63,50 @@ int analysis(packet_info **p_info,struct pcap_pkthdr *pkt,const u_char *packet)
 			socket->prot=ip_h->protocol;
 			socket->src_port=ntohs(tcp_h->source);
 			socket->dst_port=ntohs(tcp_h->dest);
-
-			if(info==NULL)
-			{
-				info=(packet_info *)malloc(sizeof(packet_info));
-				info->socket=(Socket *)malloc(sizeof(Socket));
-				info->len=0;
-				info->capacity=65535;
-				info->payload=(unsigned char*)malloc(sizeof(unsigned char)*info->capacity);
-			}
 			
+			if(!start)
+			{		
+				int i;
+				int flag=0;
+				for(i=0;i<sockets_count;i++)
+				{
+					if(is_same(sockets[i],socket))
+					{
+						if(handshakes[i]==0&&tcp_h->syn==1&&tcp_h->ack==0)
+							handshakes[i]=1;
+						if(handshakes[i]==1&&tcp_h->syn==1&&tcp_h->ack==1)
+							handshakes[i]=2;
+						if(handshakes[i]==2&&tcp_h->syn==0&&tcp_h->ack==1)
+							handshakes[i]=3;
+						flag=1;
+						break;
+					}
+				}	
+				if(!flag)
+				{
+					socket_copy(sockets[sockets_count],socket);
+					if(tcp_h->syn==1&&tcp_h->ack==0)
+						handshakes[sockets_count]=1;
+					sockets_count++;
+				}
+			
+				for(i=0;i<sockets_count;i++)
+					if(handshakes[i]==3)
+					{
+						socket_copy(info->socket,sockets[i]);
+						start=1;
+					}
+				return 1;
+			}
+				
+			if(len<=0)
+				return 1;
+
+			
+			if(!is_same(info->socket,socket))
+				return 2;
 			if(info->len==0)
 			{
-				socket_copy(info->socket,socket);
 				info->syn_seq=ntohl(tcp_h->seq);
 				info->syn_ack=ntohl(tcp_h->ack_seq);
 				memcpy(info->payload,packet+offset,len);
@@ -79,17 +114,9 @@ int analysis(packet_info **p_info,struct pcap_pkthdr *pkt,const u_char *packet)
 			}
 			else
 			{
-				if(!is_same(info->socket,socket))
-					return 2;
-				if(len+info->len>=info->capacity)
-				{
-					info->payload=(unsigned char*)realloc(info->payload,(info->capacity+1024)*sizeof(unsigned char));	
-					info->capacity+=1024;
-				}
 				int dev=(ntohl(tcp_h->seq)-info->syn_seq)+(ntohl(tcp_h->ack_seq)-info->syn_ack);
 				memcpy(info->payload+dev,packet+offset,len);
 				info->len+=len;
-
 			}
 		}
 		else
@@ -106,7 +133,23 @@ int analysis(packet_info **p_info,struct pcap_pkthdr *pkt,const u_char *packet)
 }
 int get_packet(int num,char *filter,packet_info **p_info,char *filename)
 {
+	
+	/*init handshake count*/
+	int i;
+	for(i=0;i<socket_num;i++)
+	{
+		sockets[i]=(Socket*)malloc(sizeof(Socket));
+		handshakes[i]=0;
+	}
+	sockets_count=0;
+
 	packet_info *info=NULL;
+	info=(packet_info *)malloc(sizeof(packet_info));
+	info->socket=(Socket *)malloc(sizeof(Socket));
+	info->len=0;
+	info->capacity=65535;
+	info->payload=(unsigned char*)malloc(sizeof(unsigned char)*info->capacity);
+
 	char ebuf[PCAP_ERRBUF_SIZE];
 	/*open a pcap file*/
 	pcap_t *device=pcap_open_offline(filename,ebuf);
@@ -151,6 +194,12 @@ int get_packet(int num,char *filter,packet_info **p_info,char *filename)
 				return EOF;
 			count++;
 		}	
+	}
+	printf("count:%d\n",sockets_count);
+	for(i=0;i<sockets_count;i++)
+	{
+		printf("handshakes %d :%d \n",i,handshakes[i]);
+		pat_print_socket(sockets[i]);
 	}
 	*p_info=info;
 	pcap_close(device);	

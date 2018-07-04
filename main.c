@@ -23,6 +23,7 @@ int main(int argc,char *argv[])
 	int ret;
 	unsigned char *p=info->payload;
 	int info_len=info->len;
+//	pat_print_gzc(p,info_len);
 	http_session *mysession=(http_session *)malloc(sizeof(http_session)); 
 	mysession->request=(sess_info *)malloc(sizeof(sess_info));
 	mysession->response=(sess_info *)malloc(sizeof(sess_info));

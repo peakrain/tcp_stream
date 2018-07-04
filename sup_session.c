@@ -11,6 +11,7 @@ int request_parse(sess_info **info,unsigned char *data)
 		p=(sess_info*)malloc(sizeof(sess_info));
 	if(!p)
 		return EOF;
+	p->count=0;
 	char ldata[line_size];
 	char type[10];
 	char uri[1024];
