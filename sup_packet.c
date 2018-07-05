@@ -195,12 +195,6 @@ int get_packet(int num,char *filter,packet_info **p_info,char *filename)
 			count++;
 		}	
 	}
-	printf("count:%d\n",sockets_count);
-	for(i=0;i<sockets_count;i++)
-	{
-		printf("handshakes %d :%d \n",i,handshakes[i]);
-		pat_print_socket(sockets[i]);
-	}
 	*p_info=info;
 	pcap_close(device);	
 }

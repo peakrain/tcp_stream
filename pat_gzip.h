@@ -66,7 +66,7 @@ int pat_gzip_uncompress(unsigned char *pSrc,int srcSize,unsigned char *out_data,
 }
 /*
  *
- *不可用
+ *
  *
  */
 int pat_gzip_compress(unsigned char *pSrc,int srcSize,unsigned char *out_data,int *out_len)

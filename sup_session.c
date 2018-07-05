@@ -4,14 +4,8 @@
 #include<string.h>
 #include<malloc.h>
 #define line_size 1024
-int request_parse(sess_info **info,unsigned char *data)
+int request_parse(unsigned char *data)
 {
-	sess_info *p=*info;
-	if(p==NULL)
-		p=(sess_info*)malloc(sizeof(sess_info));
-	if(!p)
-		return EOF;
-	p->count=0;
 	char ldata[line_size];
 	char type[10];
 	char uri[1024];
@@ -20,34 +14,23 @@ int request_parse(sess_info **info,unsigned char *data)
 	if(get_line(ldata,&data)==EOF)
 		return EOF;
 	sscanf(ldata,"%s %s",type,uri);
-	strcpy(p->name[p->count],"请求类型");
-	strcpy(p->value[p->count],type);
-	p->count++;
-	
-	strcpy(p->name[p->count],"URI");
-	strcpy(p->value[p->count],uri);
-	p->count++;
-
+	printf("name:请求类型 value:%s\n",type);
+	printf("name:URI value:%s\n",uri);
 	
 	while(get_line(ldata,&data)!=EOF)	
 	{
 		if(sscanf(ldata,"%[^:]: %[^\n]",name,value)!=EOF)
 		{
-			strcpy(p->name[p->count],name);
-			strcpy(p->value[p->count],value);
-			p->count++;
+			printf("name:%s value:%s\n",name,value);
 		}
 	}
-	*info=p;	
 }
 
-int response_parse(sess_info  **info,unsigned char *data)
+int response_parse(response_field *field,unsigned char *data)
 {
-	sess_info *p=*info;
-	if(p==NULL)
-		p=(sess_info*)malloc(sizeof(sess_info));
-	if(!p)
-		return EOF;
+	memset(field->Content_Encoding,'\0',field_size);
+	memset(field->Transfer_Encoding,'\0',field_size);
+	field->Content_Length=-1;
 	char ldata[line_size];
 	char version[10];
 	char code[10];
@@ -56,37 +39,53 @@ int response_parse(sess_info  **info,unsigned char *data)
 	if(get_line(ldata,&data)==EOF)
 		return EOF;
 	sscanf(ldata,"%*[HTTP/]%s%s",version,code);
-	strcpy(p->name[p->count],"version");
-	strcpy(p->value[p->count],version);
-	p->count++;
-	
-	strcpy(p->name[p->count],"code");
-	strcpy(p->value[p->count],code);
-	p->count++;
+	printf("name:version value:%s\n",version);
+	printf("name:code value:%s\n",code);
 	
 	while(get_line(ldata,&data)!=EOF)	
 	{
 		if(sscanf(ldata,"%[^:]: %[^\n]",name,value)!=EOF)
 		{
-			strcpy(p->name[p->count],name);
-			strcpy(p->value[p->count],value);
-			p->count++;
+			printf("name:%s value:%s\n",name,value);
+			if(strcmp(name,"Transfer-Encoding")==0)
+			{
+				strcpy(field->Transfer_Encoding,value);
+			}
+			if(strcmp(name,"Content-Encoding")==0)
+			{
+				strcpy(field->Content_Encoding,value);
+			}
+			if(strcmp(name,"Content-Length")==0)
+			{
+				field->Content_Length=atoi(value);
+			}
+				
 		}
 	}	
 }
-int auto_split(unsigned char *data,int *len,unsigned char *source,int slen)
+int auto_split(unsigned char *data,int *len,unsigned char **source,int *slen,int flag)
 {
 	int i;
-	unsigned char *p=source;
-	for(i=0;i<slen;i++)
-		if(i<slen-3)
+	unsigned char *p=*source;
+	if(flag!=-1)
+	{			
+		*len=flag;
+		memcpy(data,p,*len);
+		p=p+flag;
+		*source=p;
+		*slen=*slen-flag;
+		return 1;
+	}
+	for(i=0;i<*slen;i++)
+		if(i<*slen-3)
 		{
 			if(p[i]==0x0d&&p[i+1]==0x0a&&p[i+2]==0x0d&&p[i+3]==0x0a)
 			{
 				*len=i+2;
 				memcpy(data,p,*len);
-				if(slen-(i+4)<=0)
-					return 1;
+				p=p+(i+4);
+				*source=p;
+				*slen=*slen-(i+4);
 				return 0;
 			}
 		}
@@ -163,4 +162,74 @@ int get_line(char *buf,unsigned char **data)
 	p=p+len-1;
 	*data=p;
 	return ebuf;
+}
+int tcp_stream_parse(unsigned char *payload,int payload_len)
+{
+	int len;
+	int ret;
+	unsigned char *p=payload;
+	int p_len=payload_len;
+	unsigned char data[p_len];
+	response_field field;
+	field.Content_Length=-1;
+	int state=0;//1代表请求　2代表响应
+	while(1)
+	{
+		memset(data,'\0',payload_len);
+		ret=auto_split(data,&len,&p,&p_len,field.Content_Length);
+		field.Content_Length=-1;
+		if(ret==EOF)
+			break;
+		if((strncmp(data,"GET",3)==0)||(strncmp(data,"POST",4)==0))
+		{
+			printf("请求头:\n");
+			request_parse(data);
+			printf("\n");
+			state=1;
+		}
+		else if(strncmp(data,"HTTP",4)==0)
+		{
+			printf("响应头:\n");
+			response_parse(&field,data);
+			printf("\n");
+			state=2;
+		}
+		else
+		{
+			if(state==2)
+			{
+				printf("响应体:\n");
+				unsigned char chunk[len];
+				int clen=0;
+				if(strlen(field.Transfer_Encoding)!=0)
+				{
+					if(strcmp(field.Transfer_Encoding,"chunked")==0)
+						join_chunk(chunk,&clen,data,len);
+				}
+				int glen=0;
+				unsigned char gzip[10*len];
+				if(strlen(field.Content_Encoding)!=0)
+				{
+					if(strcmp(field.Content_Encoding,"gzip")==0)
+					{
+						glen=10*len;
+						if(clen!=0)
+							pat_gzip_uncompress(chunk,clen,gzip,&glen);
+						else
+							pat_gzip_uncompress(data,len,gzip,&glen);
+					}
+				}
+				if(glen!=0)
+					printf("%s\n",gzip);
+				 else if(clen!=0)
+					printf("%s\n",chunk);
+				else
+					printf("%s\n",data);
+				printf("\n");
+				state=0;
+
+			}
+		}
+	}
+	return 0;
 }
